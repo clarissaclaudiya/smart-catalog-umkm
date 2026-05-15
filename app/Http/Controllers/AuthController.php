@@ -18,16 +18,26 @@ class AuthController extends Controller
     public function register(Request $request)
     {
         $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
+            'name' => 'required',
+            'email' => 'required|email|unique:users',
+            'password' => 'required|confirmed',
+            'role' => 'required|in:merchant,admin',
         ]);
 
+        // Merchant perlu persetujuan admin, admin langsung aktif
+        $status = $request->role === 'merchant' ? 'pending' : 'approved';
+
         User::create([
-            'name' => $request->name,
-            'email' => $request->email,
+            'name'     => $request->name,
+            'email'    => $request->email,
             'password' => Hash::make($request->password),
+            'role'     => $request->role,
+            'status'   => $status,
         ]);
+
+        if ($request->role === 'merchant') {
+            return redirect('/login')->with('success', 'Pendaftaran berhasil! Akun kamu sedang menunggu persetujuan Admin. Kamu akan dihubungi setelah disetujui.');
+        }
 
         return redirect('/login')->with('success', 'Registrasi berhasil, silakan login.');
     }
@@ -45,6 +55,32 @@ class AuthController extends Controller
         ]);
 
         if (Auth::attempt($credentials)) {
+            $user = Auth::user();
+
+            // Cek apakah Role yang dipilih sesuai dengan di Database
+            if ($user->role !== $request->role) {
+                Auth::logout();
+                return back()->with('error', 'Hak akses tidak sesuai! Pastikan pilih Role yang benar.');
+            }
+
+            // Cek status akun merchant
+            if ($user->role === 'merchant') {
+                if ($user->status === 'pending') {
+                    Auth::logout();
+                    return back()->with('error', '⏳ Akun kamu masih menunggu persetujuan Admin. Harap bersabar.');
+                }
+
+                if ($user->status === 'rejected') {
+                    Auth::logout();
+                    return back()->with('error', '❌ Maaf, pendaftaran akun kamu telah ditolak oleh Admin. Hubungi admin untuk informasi lebih lanjut.');
+                }
+
+                if ($user->status === 'suspended') {
+                    Auth::logout();
+                    return back()->with('error', '⛔ Akun kamu telah dinonaktifkan oleh Admin. Hubungi admin untuk informasi lebih lanjut.');
+                }
+            }
+
             $request->session()->regenerate();
             return redirect()->intended('/dashboard');
         }
